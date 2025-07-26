@@ -1,0 +1,262 @@
+#include "utils.h"
+
+#include <gio/gio.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct _WatcherClass WatcherClass;
+typedef struct _Watcher Watcher;
+
+struct _WatcherClass {
+	GObjectClass parent_class;
+};
+struct _Watcher {
+	GObject parent_instance;
+	GVariant *hosts;
+	GVariant *items;
+};
+enum {
+	PROP_0,
+	PROP_HOSTS,
+	PROP_ITEMS
+};
+static Watcher *watcher = NULL;
+static GDBusNodeInfo *intro_data = NULL;
+static guint stat_watch;
+static const gchar watcher_name[] = "org.kde.StatusNotifierWatcher";
+static const gchar *watcher_path = "/StatusNotifierWatcher";
+static const gchar xml_data[] =
+	"<!DOCTYPE node PUBLIC '-//freedesktop//DTD D-BUS Object Introspection 1.0//EN' 'http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd'>"
+	"<node>"
+	"	<interface name='org.kde.StatusNotifierWatcher'>"
+	"		<method name='RegisterStatusNotifierItem'>"
+	"			<arg name='service' type='s' direction='in'/>"
+	"		</method>"
+	"		<method name='RegisterStatusNotifierHost'>"
+	"			<arg name='service' type='s' direction='in'/>"
+	"		</method>"
+	"		<property name='RegisteredStatusNotifierItems' type='as' access='read'>"
+	"			<annotation name='org.qtproject.QtDBus.QtTypeName.Out0' value='QStringList'/>"
+	"		</property>"
+	"		<property name='IsStatusNotifierHostRegistered' type='b' access='read'/>"
+	"		<property name='ProtocolVersion' type='i' access='read'/>"
+	"		<signal name='StatusNotifierItemRegistered'>"
+	"			<arg type='s'/>"
+	"		</signal>"
+	"		<signal name='StatusNotifierItemUnregistered'>"
+	"			<arg type='s'/>"
+	"		</signal>"
+	"		<signal name='StatusNotifierHostRegistered'>"
+	"		</signal>"
+	"		<signal name='StatusNotifierHostUnregistered'>"
+	"		</signal>"
+	"	</interface>"
+	"</node>";
+
+static GType watcher_get_type (void);
+G_DEFINE_TYPE (Watcher, watcher, G_TYPE_OBJECT)
+
+static void watcher_finalize (GObject *object) {
+	Watcher *watcher = (Watcher*)object;
+	g_variant_unref(watcher->hosts);
+	g_variant_unref(watcher->items);
+	G_OBJECT_CLASS (watcher_parent_class)->finalize (object);
+}
+
+static void watcher_init (Watcher *object) {
+	object->hosts = g_variant_new_strv(NULL, 0);
+	object->items = g_variant_new_strv(NULL, 0);
+}
+
+static void watcher_get_property (GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) {
+	Watcher *watcher = (Watcher*)object;
+	switch (prop_id) {
+		case PROP_HOSTS:
+			g_value_set_variant(value, watcher->hosts);
+			break;
+		case PROP_ITEMS:
+			g_value_set_variant(value, watcher->items);
+			break;
+		default:
+			G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+	}
+}
+
+static void watcher_set_property (GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) {
+	Watcher *watcher = (Watcher*)object;
+	switch (prop_id) {
+		case PROP_HOSTS:
+			g_variant_unref(watcher->hosts);
+			watcher->hosts = g_value_dup_variant(value);
+			break;
+		case PROP_ITEMS:
+			g_variant_unref(watcher->items);
+			watcher->items = g_value_dup_variant(value);
+			break;
+		default:
+			G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+	}
+}
+
+static void watcher_class_init (WatcherClass *class) {
+	GObjectClass *gobject_class = G_OBJECT_CLASS (class);
+
+	gobject_class->finalize = watcher_finalize;
+	gobject_class->set_property = watcher_set_property;
+	gobject_class->get_property = watcher_get_property;
+
+	g_object_class_install_property(gobject_class, PROP_HOSTS,
+			g_param_spec_variant("hosts", "Hosts", "Hosts", G_VARIANT_TYPE_STRING_ARRAY, NULL,
+			G_PARAM_READWRITE));
+
+	g_object_class_install_property(gobject_class, PROP_ITEMS,
+			g_param_spec_variant("items", "Items", "Items", G_VARIANT_TYPE_STRING_ARRAY, NULL,
+			G_PARAM_READWRITE));
+}
+
+static void watcher_remove_from_array(Watcher *watcher, GVariant *prop, const gchar *prop_name, const gchar *name) {
+	gsize size;
+	gchar **orig = g_variant_dup_strv(prop, &size);
+	if(size > 0) {
+		const gchar *new[size - 1];
+		g_message("watcher Removing %s from %s, new size: %lu", name, prop_name, size - 1);
+		int j = 0;
+		for(gsize i = 0; i < size; i++, j++) {
+			if(g_strcmp0(orig[i], name) == 0) {
+				if(i < size - 1)
+					i++;
+				else
+					break;
+			}
+			new[j] = orig[i];
+		}
+		g_object_set(watcher, prop_name, g_variant_new_strv(new, size - 1), NULL);
+		//g_free((gchar *) name);
+	}
+	g_strfreev(orig);
+
+}
+static void watcher_add_to_array(Watcher *watcher, GVariant *prop, const gchar *prop_name, const gchar *name) {
+	gsize size;
+	gchar ** orig = g_variant_dup_strv(prop, &size);
+	const gchar *new[size + 1];
+	g_message("watcher Adding %s to %s, new size: %lu", name, prop_name, size + 1);
+	for(gsize i = 0; i < size; i++)
+		new[i] = orig[i];
+	new[size] = name;
+	g_object_set(watcher, prop_name, g_variant_new_strv(new, size + 1), NULL);
+	g_strfreev(orig);
+}
+
+static void item_appeared_handler(UNUSED GDBusConnection *c, UNUSED const gchar *name, UNUSED const gchar *owner, UNUSED gpointer user_data) {
+	watcher_add_to_array(watcher, watcher->items, "items", user_data);
+}
+
+static void item_vanished_handler(GDBusConnection *c, UNUSED const gchar *name, UNUSED gpointer user_data) {
+	gchar *service = user_data;
+	g_message("watcher Item %s has vanished", service);
+	watcher_remove_from_array(watcher, watcher->items, "items", service);
+	g_dbus_connection_emit_signal(c, NULL, watcher_path, watcher_name,
+		"StatusNotifierItemUnregistered", g_variant_new("(s)", service), NULL);
+	g_free(service);
+}
+static void host_appeared_handler(UNUSED GDBusConnection *c, UNUSED const gchar *name, UNUSED const gchar *owner, UNUSED gpointer user_data) {
+	g_message("watcher Host %s appeared", name);
+	watcher_add_to_array(watcher, watcher->hosts, "hosts", user_data);
+}
+static void host_vanished_handler(UNUSED GDBusConnection *c, UNUSED const gchar *name, UNUSED gpointer user_data) {
+	g_message("watcher Host %s has vanished", name);
+	watcher_remove_from_array(watcher, watcher->hosts, "hosts", user_data);
+}
+static void handle_method_call(GDBusConnection *c, const gchar *sender, UNUSED const gchar *obj_path,
+		UNUSED const gchar *int_name, const gchar *method_name, GVariant *param, GDBusMethodInvocation *invoc,
+		UNUSED gpointer user_data) {
+	gboolean proxy = FALSE;
+	const gchar *tmp, *service;
+	g_variant_get(param, "(&s)", &tmp);
+
+	g_message("watcher %s called method '%s', args '%s'", sender, method_name, tmp);
+	if(g_strcmp0(method_name, "RegisterStatusNotifierItem") == 0) {
+		//libappindicator sends object path, so we should use sender name and object path
+		if(tmp[0] == '/')
+			service = g_strconcat(sender, tmp, NULL);
+		//xembedsniproxy sends item name, so we should use the item from the argument
+		else if(tmp[0] == ':') {
+			service = g_strconcat(tmp, "/StatusNotifierItem", NULL);
+			proxy = TRUE;
+		}
+		else
+			service = g_strconcat(sender, "/StatusNotifierItem", NULL);
+
+		g_dbus_method_invocation_return_value(invoc, NULL);
+		g_dbus_connection_emit_signal(c, NULL, watcher_path, watcher_name,
+				"StatusNotifierItemRegistered", g_variant_new("(s)", service),  NULL);
+		g_bus_watch_name(G_BUS_TYPE_SESSION, proxy ? tmp : sender,
+			G_BUS_NAME_WATCHER_FLAGS_NONE, item_appeared_handler, item_vanished_handler, (gpointer) service, NULL);
+	} else if(g_strcmp0(method_name, "RegisterStatusNotifierHost") == 0) {
+		service = g_strdup(sender);
+		g_dbus_method_invocation_return_value(invoc, NULL);
+		g_dbus_connection_emit_signal(c, NULL, watcher_path, watcher_name,
+				"StatusNotifierHostRegistered", g_variant_new("(s)", sender), NULL);
+		g_bus_watch_name(G_BUS_TYPE_SESSION, sender,
+			G_BUS_NAME_WATCHER_FLAGS_NONE, host_appeared_handler, host_vanished_handler, (gpointer) service, NULL);
+	}
+
+}
+
+static GVariant *handle_get_property(UNUSED GDBusConnection *connection, const gchar *sender,
+	UNUSED const gchar *obj_path, UNUSED const gchar *int_name, const gchar *prop_name, UNUSED GError **error,
+	UNUSED gpointer user_data) {
+	GVariant *ret;
+	g_message("watcher %s requested property '%s'", sender, prop_name);
+	if(g_strcmp0(prop_name, "RegisteredStatusNotifierItems") == 0) {
+		g_object_get(watcher, "items",  &ret, NULL);
+		g_variant_ref_sink(ret);
+	} else if(g_strcmp0(prop_name, "IsStatusNotifierHostRegistered") == 0) {
+		gsize size;
+		gchar **tmp = g_variant_dup_strv(watcher->hosts, &size);
+		g_strfreev(tmp);
+		ret = g_variant_new_boolean(size > 0);
+	} else if(g_strcmp0(prop_name, "ProtocolVersion") == 0) {
+		ret = g_variant_new_int32(0);
+	}
+	return ret;
+}
+
+static const GDBusInterfaceVTable int_vtable = {
+	.method_call = handle_method_call,
+	.get_property = handle_get_property,
+	.set_property = NULL
+};
+
+static void on_bus_acquired(GDBusConnection *c, UNUSED const gchar *name, UNUSED gpointer user_data) {
+	guint reg_id;
+	reg_id = g_dbus_connection_register_object(c, watcher_path, intro_data->interfaces[0], &int_vtable,
+			NULL, NULL, NULL);
+	g_assert(reg_id > 0);
+
+}
+static void on_name_acquired(UNUSED GDBusConnection *c, UNUSED const gchar *name, UNUSED gpointer user_data) {
+	g_message("watcher registered");
+}
+
+static void on_name_lost(UNUSED GDBusConnection *c, UNUSED const gchar *name, UNUSED gpointer user_data) {
+	g_error("watcher Failed to register");
+	exit(1);
+}
+
+void watcher_start() {
+	intro_data = g_dbus_node_info_new_for_xml(xml_data, NULL);
+	g_assert(intro_data != NULL);
+	watcher = g_object_new(watcher_get_type(), NULL);
+
+	stat_watch = g_bus_own_name(G_BUS_TYPE_SESSION, watcher_name, G_BUS_NAME_OWNER_FLAGS_REPLACE,
+		on_bus_acquired, on_name_acquired, on_name_lost, NULL, NULL);
+}
+
+void watcher_destroy() {
+	g_bus_unown_name(stat_watch);
+	g_dbus_node_info_unref(intro_data);
+	g_variant_unref(watcher->items);
+	g_variant_unref(watcher->hosts);
+}

@@ -1,0 +1,11 @@
+*.swp
+*.kate-swp
+*.o
+*.pkg.tar.xz
+pkg
+src
+.dist
+core
+.\#*
+*\~
+sni-docker
