@@ -15,7 +15,7 @@ CFLAGS=-pedantic -Wall -W -O --debug
 #                                                                 #
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 
-PACKAGE=sni-dock
+PACKAGE=sni-docker
 VERSION=1.5.1
 
 target=sni-docker
@@ -23,7 +23,7 @@ sources=$(wildcard *.c)
 headers=$(wildcard *.h)
 extra=README COPYING version.h.in
 
-pkg-deps=gio-2.0 x11 librsvg-2.0
+pkg-deps=gio-2.0 x11 librsvg-2.0 gtk4
 
 all: $(target) $(sources) $(headers)
 	@echo Build Successful

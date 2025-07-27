@@ -32,26 +32,6 @@ static gboolean host_item_find_name(gconstpointer a, gconstpointer b) {
 	return strlen(name)>i && name[i]=='/';
 }
 
-static gchar *get_property_string(GDBusProxy *p, gchar *prop, GError **error) {
-	gchar *retstr = NULL;
-
-	GVariant *params=g_variant_new("(ss)", g_dbus_proxy_get_interface_name(p), prop);
-	GVariant *val = g_dbus_proxy_call_sync(p, "org.freedesktop.DBus.Properties.Get", params, G_DBUS_CALL_FLAGS_NONE,
-			-1, NULL, error);
-	if(error && *error)
-		return NULL;
-	if(val == NULL)
-		return NULL;
-	GVariant *variant = NULL;
-	g_variant_get(val, "(v)", &variant);
-	if(variant != NULL) {
-		retstr = g_variant_dup_string(variant, NULL);
-		g_variant_unref(variant);
-	}
-	g_variant_unref(val);
-	return retstr;
-}
-
 static void host_item_changed(GDBusProxy *p, gchar *sender_name, gchar *signal_name,
 		GVariant *param, gpointer user_data) {
 		ItemData *item=(ItemData*)user_data;
@@ -67,7 +47,11 @@ static void host_item_proxy_done(UNUSED GObject *source, GAsyncResult *res, UNUS
 		return;
 	}
 
-	gchar *id = get_property_string(proxy, "Id", &error);
+	GVariant *params=g_variant_new("(ss)", g_dbus_proxy_get_interface_name(proxy), "Id");
+	GVariant *val = g_dbus_proxy_call_sync(proxy, "org.freedesktop.DBus.Properties.Get", params, G_DBUS_CALL_FLAGS_NONE,
+			-1, NULL, &error);
+	if(val)
+		g_variant_unref(val);
 	if(error) {
 		g_error_free(error);
 		const gchar *name = g_dbus_proxy_get_name(proxy);
@@ -85,39 +69,29 @@ static void host_item_proxy_done(UNUSED GObject *source, GAsyncResult *res, UNUS
 
 
 	g_message("host item connected %s", g_dbus_proxy_get_name_owner(proxy));
-	gchar **names = g_dbus_proxy_get_cached_property_names(proxy);
-
-	if (names) {
-		for (int i = 0; names[i] != NULL; i++) {
-			g_message("Property in cache: %s", names[i]);
-		}
-	} else {
-		g_message("No cached properties available");
-	}
-
 	g_ptr_array_add(items, data);
 
 	data->proxy = proxy;
-	data->id = id;
+	data->id = g_dbus_proxy_get_property_string(proxy, "Id");
 	data->win = x11_create();
 
-	data->category = get_property_string(proxy, "Category", NULL);
-	data->title = get_property_string(proxy, "Title", NULL);
-	data->status = get_property_string(proxy, "Status", NULL);
+	data->category = g_dbus_proxy_get_property_string(proxy, "Category");
+	data->title = g_dbus_proxy_get_property_string(proxy, "Title");
+	data->status = g_dbus_proxy_get_property_string(proxy, "Status");
 
-	if((data->icon_name = get_property_string(proxy, "IconName", NULL)) != NULL) {
+	if((data->icon_name = g_dbus_proxy_get_property_string(proxy, "IconName")) != NULL) {
 		data->icon_path = icon_get(data->icon_name, icon_size);
 		g_message("IconName %s", data->icon_path);
 	}
-//	GVariant *var = g_dbus_proxy_get_cached_property(proxy, "IconPixmap");
+//	GVariant *var = g_dbus_proxy_get_property_string(proxy, "IconPixmap");
 //	if(var!=NULL) {
 //		g_message("has pixmap");
 //	}
-	if((data->overlay_name = get_property_string(proxy, "OverlayIconName", NULL)) != NULL)
+	if((data->overlay_name = g_dbus_proxy_get_property_string(proxy, "OverlayIconName")) != NULL)
 		data->overlay_path = icon_get(data->overlay_name, icon_size);
 	// OverlayIconPixmap
 
-	if((data->att_name = get_property_string(proxy, "AttentionIconName", NULL)) != NULL)
+	if((data->att_name = g_dbus_proxy_get_property_string(proxy, "AttentionIconName")) != NULL)
 		data->att_path = icon_get(data->att_path, icon_size);
 	// AttentionIconPixmap
 

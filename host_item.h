@@ -4,14 +4,6 @@
 #include <gio/gio.h>
 #include <X11/Xlib.h>
 
-/*
-typedef struct Pixmap {
-	gint32 width;
-	gint32 height;
-	GBytes *pixmap;
-} Pixmap;
-*/
-
 typedef struct {
 	GDBusProxy *proxy;
 	Window win;
