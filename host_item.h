@@ -2,32 +2,18 @@
 #define __host_item_h
 
 #include <gio/gio.h>
+#include <gtk/gtk.h>
 #include <X11/Xlib.h>
+
+extern gint icon_size;
+extern gint border;
 
 typedef struct {
 	GDBusProxy *proxy;
-	Window win;
-	gchar *category;
-	gchar *id;
-	gchar *title;
-	gchar *status;
-	gchar *icon_name;
-	gchar *overlay_name;
-	gchar *overlay_pixmap;
-	gchar *att_name;
-	Pixmap *att_pixmap;
-	//TODO tooltip icon name, icon pixmap, title, description
-	gboolean ismenu;
-	GVariant *obj_path;
-
-	// computed icon path
-	gchar *icon_path;
-	gchar *overlay_path;
-	gchar *att_path;
-
-	Pixmap icon_x11;
-	Pixmap overlay_x11;
-	Pixmap att_x11;
+	
+	Window x11win;
+	GtkWidget *window;
+	GtkWidget *menu;
 } ItemData;
 
 void host_item_init();

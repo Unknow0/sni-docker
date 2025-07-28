@@ -1,5 +1,4 @@
 #include "utils.h"
-#include "icons.h"
 #include "host_item.h"
 
 #include <gio/gio.h>

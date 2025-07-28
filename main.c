@@ -1,19 +1,16 @@
-#include "x11source.h"
 #include "watcher.h"
 #include "host.h"
-#include "x11.h"
-#include "icons.h"
 #include "utils.h"
+#include "host_item.h"
 
 #include <assert.h>
 #include <signal.h>
 #include <X11/Xutil.h>
-
-static char *display_string = NULL;
-
-static GMainLoop *loop;
+#include <gtk/gtk.h>
 
 static gboolean watcher = FALSE;
+
+extern GtkApplication *app;
 
 void signal_handler(int signal) {
 	switch (signal) {
@@ -27,7 +24,7 @@ void signal_handler(int signal) {
 	case SIGTERM:
 	case SIGINT:
 	case SIGHUP:
-		g_main_loop_quit(loop);
+		g_application_quit(G_APPLICATION(app));
 	}
 }
 
@@ -36,15 +33,7 @@ void parse_cmd_line(int argc, char **argv) {
 	gboolean help = FALSE;
 
 	for (i = 1; i < argc; i++) {
-		if (0 == strcasecmp(argv[i], "-display")) {
-			++i;
-			if (i < argc) {
-				display_string = argv[i];
-			} else { /* argument doesn't exist */
-				g_printerr("-display requires a parameter\n");
-				help = TRUE;
-			}
-		} else if (0 == strcasecmp(argv[i], "-watcher")) {
+		if (0 == strcasecmp(argv[i], "-watcher")) {
 			watcher = TRUE;
 		} else if (0 == strcasecmp(argv[i], "-border")) {
 			++i;
@@ -89,7 +78,6 @@ void parse_cmd_line(int argc, char **argv) {
 			g_print("Usage: %s [OPTIONS]\n\n", argv[0]);
 			g_print("Options:\n");
 			g_print("	-help						 Show this help.\n");
-			g_print("	-display DISLPAY	The X display to connect to.\n");
 			g_print("	-border					 The width of the border to put around the\n"
 							"										system tray icons. Defaults to 1.\n");
 			g_print("	-vertical				 Line up the icons vertically. Defaults to\n"
@@ -107,9 +95,12 @@ void parse_cmd_line(int argc, char **argv) {
 	}
 }
 
+static void on_activate(GtkApplication *app, UNUSED gpointer user_data) {
+	g_application_hold(G_APPLICATION(app));
+}
+
 int main(int argc, char **argv) {
 	struct sigaction act;
-	GSource *source;
 
 	act.sa_handler = signal_handler;
 	act.sa_flags = 0;
@@ -122,30 +113,25 @@ int main(int argc, char **argv) {
 
 	parse_cmd_line(argc, argv);
 
-	display = XOpenDisplay(display_string);
-	if (!display) 
-		g_printerr("Unable to open Display %s. Exiting.\n", DisplayString(display_string));
-
-	root = RootWindow(display, DefaultScreen(display));
-	assert(root);
-
-	icons_init();
-
 	watcher_start();
 	host_init();
 
-	source = x11source_new(display);
-	g_source_attach(source, NULL);
- 
+	gtk_init();
+	GtkCssProvider *provider = gtk_css_provider_new();
+	gtk_css_provider_load_from_string(provider, "* { background-color: rgba(0,0,0,0); color: white; }");
+
+	GdkDisplay *display = gdk_display_get_default();
+	gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+
  	g_message("staring loop");
-	loop=g_main_loop_new(NULL,0);
-	g_main_loop_run(loop);
+	app = gtk_application_new("io.github.unknow0.sni-dock", G_APPLICATION_DEFAULT_FLAGS);
+	g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
+	g_application_run(G_APPLICATION(app), argc, argv);
 	g_message("Stoping");
 
-	g_main_loop_unref(loop);
+	g_object_unref(app);
 	watcher_destroy();
 	host_destroy();
 
-	XCloseDisplay(display);
 	return 0;
 }

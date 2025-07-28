@@ -23,7 +23,7 @@ sources=$(wildcard *.c)
 headers=$(wildcard *.h)
 extra=README COPYING version.h.in
 
-pkg-deps=gio-2.0 x11 librsvg-2.0 gtk4
+pkg-deps=gio-2.0 x11 librsvg-2.0 gtk4 gtk4-x11
 
 all: $(target) $(sources) $(headers)
 	@echo Build Successful
