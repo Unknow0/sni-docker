@@ -20,6 +20,8 @@ static void host_item_destroy_item(gpointer item) {
 	g_signal_handlers_disconnect_by_data(data->proxy, NULL);
 	g_object_unref(data->proxy);
 
+	if(data->menu)
+		gtk_widget_unparent(data->menu);
 	gtk_window_destroy(GTK_WINDOW(data->window));
 	G_GNUC_BEGIN_IGNORE_DEPRECATIONS
 	Display *dpy = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
@@ -43,6 +45,18 @@ static void host_item_menu_run(UNUSED GSimpleAction *action, GVariant *parameter
 	gint id;
 	g_variant_get(parameter, "(i)", &id);
 	g_message("run %d", id);
+	GError *error=NULL;
+
+	GDBusConnection *co=g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+	const gchar *name=g_dbus_proxy_get_name(item->proxy);
+	const gchar *path=g_dbus_proxy_get_property_string(item->proxy, "Menu");
+	GVariant *params=g_variant_new("(isvu)", id, "clicked", g_variant_new("s", ""), time(NULL));
+	g_dbus_connection_call_sync(co, name, path, "com.canonical.dbusmenu", "Event", params, NULL, G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
+	if(error) {
+		g_warning("host_item failed to run menu item: %s", error->message);
+		g_error_free(error);
+		return;
+	}
 }
 
 static void host_item_clicked(GtkGestureClick *gesture, int npress, UNUSED double x, UNUSED double y, gpointer user_data) {
@@ -119,7 +133,8 @@ static void host_item_build_window(ItemData *data) {
 		g_dbus_proxy_get_name(data->proxy),
 		g_dbus_proxy_get_property_string(data->proxy, "Menu"));
 
-	data->menu = gtk_popover_menu_new_from_model(G_MENU_MODEL(model));
+	data->menu = gtk_popover_menu_new_from_model_full(G_MENU_MODEL(model), GTK_POPOVER_MENU_NESTED);
+	gtk_popover_set_has_arrow(GTK_POPOVER(data->menu), false);
 	gtk_widget_set_parent(data->menu, data->window);
 
 	GSimpleAction *action = g_simple_action_new("run", g_variant_type_new("(i)"));

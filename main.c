@@ -118,7 +118,7 @@ int main(int argc, char **argv) {
 
 	gtk_init();
 	GtkCssProvider *provider = gtk_css_provider_new();
-	gtk_css_provider_load_from_string(provider, "* { background-color: rgba(0,0,0,0); color: white; }");
+	gtk_css_provider_load_from_string(provider, "window { background-color: rgba(0,0,0,0); }");
 
 	GdkDisplay *display = gdk_display_get_default();
 	gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
